@@ -1,0 +1,805 @@
+﻿This CVPR paper is the Open Access version, provided by the Computer Vision Foundation.
+Except for this watermark, it is identical to the accepted version;
+
+the final published version of the proceedings is available on IEEE Xplore.
+
+SplineGS: Robust Motion-Adaptive Spline
+for Real-Time Dynamic 3D Gaussians from Monocular Video
+
+Jongmin Park1* Minh-Quan Viet Bui1* Juan Luis Gonzalez Bello1 Jaeho Moon1
+
+Jihyong Oh2† Munchurl Kim1†
+
+1Korea Advanced Institute of Science and Technology (KAIST) 2Chung-Ang University
+{jm.park, bvmquan, juanluisgb, jaeho.moon, mkimee}@kaist.ac.kr jihyongoh@cau.ac.kr
+
+https://kaist-viclab.github.io/splinegs-site/
+
+Figure 1. Our SplineGS achieves state-of-the-art rendering quality with fast rendering speed for novel spatio-temporal view syn-
+thesis from monocular videos without relying on pre-computed camera parameters. (a) We use our predicted camera parameters for
+[24, 55] since COLMAP [42] is unable to provide reasonable camera parameters for most scenes in the DAVIS dataset [39]. (b) SplineGS
+achieves the best rendering quality while maintaining a rendering speed of 400 FPS on the NVIDIA dataset [56].
+
+Abstract egy for camera parameter estimation and 3D Gaussian at-
+tributes, leveraging photometric and geometric consistency.
+
+Synthesizing novel views from in-the-wild monocular videos This eliminates the need for Structure-from-Motion prepro-
+is challenging due to scene dynamics and the lack of cessing and enhances SplineGS’s robustness in real-world
+multi-view cues. To address this, we propose SplineGS, conditions. Experiments show that SplineGS significantly
+a COLMAP-free dynamic 3D Gaussian Splatting (3DGS) outperforms state-of-the-art methods in novel view syn-
+framework for high-quality reconstruction and fast render- thesis quality for dynamic scenes from monocular videos,
+ing from monocular videos. At its core is a novel Motion- achieving thousands times faster rendering speed.
+Adaptive Spline (MAS) method, which represents contin-
+uous dynamic 3D Gaussian trajectories using cubic Her- 1. Introduction
+mite splines with a small number of control points. For
+MAS, we introduce a Motion-Adaptive Control points Prun- Novel View Synthesis (NVS) is fundamental to 3D vision,
+ing (MACP) method to model the deformation of each dy- supporting applications like virtual reality (VR), augmented
+namic 3D Gaussian across varying motions, progressively reality (AR), and film production. NVS aims to generate
+pruning control points while maintaining dynamic modeling *Co-first authors (equal contribution).
+integrity. Additionally, we present a joint optimization strat- †Co-corresponding authors.
+
+26866
+
+
+
+images from any viewpoint in a scene, requiring accurate points Pruning (MACP) method that adjusts the number of
+reconstruction from multiple 2D images. NeRF [34] has ad- control points to improve rendering quality and efficiency.
+vanced the field of NVS by utilizing learned implicit func- Furthermore, we incorporate a camera parameter estimation
+tions to represent static scenes, though it requires consid- method jointly optimized with 3D Gaussian attributes and
+erable training and rendering time. Recently, 3D Gaussian MAS, leveraging photometric and geometric consistency,
+Splatting (3DGS) [20] has revolutionized this process by thus eliminating the need for external estimators. Exper-
+replacing implicit volumetric rendering with differentiable iments show that SplineGS significantly outperforms state-
+rasterization of 3D Gaussians, enabling real-time rendering of-the-art (SOTA) dynamic NVS methods both qualitatively
+and providing a more explicit scene representation. and quantitatively, offering faster rendering speed, as shown
+
+For NVS of dynamic scenes, prior works have extended in Fig. 1. Our contributions are as follows:
+the static scene representations [20, 34] by incorporating • We propose a novel Spline-based dynamic 3D Gaussian
+deformation models in canonical space using implicit rep- Splatting framework, SplineGS, which is (i) COLMAP-
+resentations [12, 30, 35, 36, 55], grid-based models that free, (ii) very fast and (iii) of high quality in reconstructing
+decompose the 4D space-time domain into multiple 2D the dynamic scenes from in-the-wild monocular videos;
+planes [4, 6, 10, 43, 52], and polynomial trajectories [24]. • A novel Motion-Adaptive Spline (MAS) is introduced,
+However, these methods face several challenges: implicit which can accurately and effectively represent the con-
+representations significantly increase computational over- tinuous trajectory of each dynamic 3D Gaussian;
+head and reduce rendering speed [6, 52]; grid-based models • A Motion-Adaptive Control points Pruning (MACP)
+struggle to fully capture the dynamic nature of scene struc- method is presented, which can efficiently adjust the
+tures, hindering their ability to model fine details accurately number of control points for each spline function, opti-
+[24]; and although polynomial trajectories improve effi- mizing both rendering quality and the efficiency of MAS.
+ciency, their fixed degree restricts flexibility for represent-
+ing complex motions. To the best of our knowledge, none
+of the dynamic 3DGS-based methods provide experimen- 2. Related Work
+tal evidence to reliably support their novel spatio-temporal Dynamic NeRF. Recent advancements in video view syn-
+view synthesis capabilities for rendering unseen intermedi- thesis have extended the static NeRF model [34] to repre-
+ate time indices. Additionally, most existing methods for sent scene dynamics. These include dynamic NeRFs using
+dynamic NVS rely heavily on external camera parameter scene flow-based frameworks [12, 25, 26], deformation es-
+estimators like COLMAP [42], which often produce impre- timation in canonical fields [1, 3, 16, 30, 35, 36, 40, 44, 47,
+cise results for challenging in-the-wild monocular videos. 51, 53], and 4D grid-based spatio-temporal radiance fields
+
+To address these issues for modeling scene dynamics, [4, 6, 10, 43]. Techniques such as NSFF [25], DynNeRF
+we exploit a spline-based model to dynamic 3D Gaussian [12], and DynIBaR [26] combine time-independent and
+trajectories, inspired by classic 3D-curve modeling in com- time-dependent radiance fields to synthesize novel spatio-
+puter graphics [9]. Splines are widely used in geometric temporal perspectives from monocular videos. Despite
+modeling for graphical applications, providing smooth and these advancements, current dynamic NeRFs still fall short
+continuous representations of complex shapes with a mini- of recent dynamic 3D Gaussian Splatting (3DGS) tech-
+mal number of control points [2, 8]. This efficiency makes niques in rendering quality and efficiency.
+them ideal for modeling intricate geometric structures while Dynamic 3DGS. The improvements in rendering quality
+maintaining both flexibility and precision. In this paper, we and speed achieved by 3DGS [20] have inspired further
+propose SplineGS, a framework for high-quality dynamic studies [14, 24, 27, 31, 52, 55] to extend the static 3DGS
+scene reconstruction and real-time neural rendering from in- framework to dynamic scenes by enabling the deforma-
+the-wild monocular videos without relying on external cam- tion of 3D Gaussian attributes. The pioneering work on
+era estimators like COLMAP [42]. SplineGS introduces dynamic 3DGS [31] introduces time-dependent offsets for
+Motion-Adaptive Spline (MAS), based on cubic Hermite the positions and rotations of dynamic 3D Gaussians via
+splines [2, 8], to effectively represent dynamic 3D Gaus- an MLP; however, this approach slows down the render-
+sian deformations. Our MAS consists of piecewise cubic ing. D3DGS [55] builds on this concept with an anneal-
+functions defined by control points that dictate each seg- ing smoothing training mechanism to improve temporal
+ment’s curvature and direction. Each control point is ad- smoothness and rendering quality. 4DGS [52] replaces
+justable and optimized as a learnable parameter, enabling the MLP network with a grid-based structure to boost ef-
+faster and more precise modeling of complex motion tra- ficiency, though this change requires quality trade-offs due
+jectories. Additionally, to adaptively model the trajectory to the resolution limits of grid-based methods. In con-
+of each dynamic 3D Gaussian based on motion complexity trast, SC-GS [14] combines an MLP deformation network
+during training, we introduce a Motion-Adaptive Control with sparse spatial deformation, reducing the computational
+
+26867
+
+
+
+cost of MLP while maintaining quality. STGS [24] intro- where ci is the color of the ith 3D Gaussian and αi is a
+duces polynomial trajectories for motion modeling, improv- density of the ith 3D Gaussian which is given by evaluat-
+ing speed and quality over implicit representations. Casual- ing the 2D covariance Σ′ ∈ R2×2. Here, Σ′ is formulated
+FVS [22] warps dynamic content from neighboring frames, as Σ′ = JWΣW⊤J⊤, where J is the Jacobian of the
+and MoSca [23] proposes a graph-based motion model- affine approximation of the projective transformation and
+ing approach to handle sparse control deformation. Very W is a viewing transformation matrix. Similar to prior
+recently, a concurrent work [21] proposes modeling dy- works [23, 27], we extend 3DGS [20] to a union of static
+namic 3D Gaussian trajectories using polynomial interpo- 3D Gaussians {Gst
+
+i |i = 1, 2, ..., nst} and dynamic 3D Gaus-
+lation between fixed keyframes for NVS from multi-view sians {Gdy
+
+i |i = 1, 2, ..., ndy} to represent static backgrounds
+videos with COLMAP [42] assistance. Unlike [21], our and moving objects, respectively, in dynamic scenes.
+SplineGS adaptively optimizes the deformation of dynamic
+3D Gaussians, accounting for varying motion degrees and 4. Proposed Method: SplineGS
+types in in-the-wild monocular videos, without requiring
+preprocessed camera parameters (COLMAP-free approach). 4.1. Overview of SplineGS
+Neural Rendering without SfM Preprocessing. Accurate
+camera parameters, including extrinsics and intrinsics, are We describe the overall architecture of SplineGS in Fig. 2.
+essential for neural rendering approaches to capture fine Given a monocular video {It|t = 0, 1, ..., Nf − 1} where
+details [17, 28]. However, in real-world settings, camera Nf is the total number of frames, SplineGS is designed to
+parameters derived from Structure-from-Motion (SfM) al- synthesize high-quality novel spatio-temporal views with
+gorithms such as COLMAP [42] often exhibit pixel-level fast rendering speed, and to estimate the camera param-
+
+eters, including the extrinsics [R̂t|T̂t] ∈ R3×4
+inaccuracies [29, 41], compromising the structural details for each
+of rendered scenes [30]. To address this, several NeRF time t, and the shared intrinsic K̂ ∈ R3×3. As shown in
+methods [28, 32, 37, 50] jointly optimize NeRF architec- Fig. 2, to stabilize joint optimization of the 3D Gaussian at-
+tures and camera parameters. Recently, a local-to-global tributes and camera parameter estimation, we adopt a two-
+training approach [11] is introduced to optimize both cam- stage optimization process consisting of a warm-up stage
+era parameters and 3D Gaussians. However, these methods and a main training stage for our SplineGS architecture. In
+are limited to static scenes. For dynamic scene reconstruc- the warm-up stage, we coarsely optimize the camera pa-
+tion, RoDynRF [30] and MoSca [23] use motion masks to rameters [R̂t|T̂t] and K̂ using photometric and geometric
+gather multi-view cues from static regions, allowing robust consistency. In the main training stage, we initialize the 3D
+rendering without pre-computed camera parameters. Our Gaussians based on the estimated camera poses and jointly
+SplineGS is also COLMAP-free, significantly outperform- optimize the 3D Gaussian attributes with the camera param-
+ing RoDynRF [30] and MoSca [23] in rendering quality and eters. Specifically, for each dynamic 3D Gaussian, we pro-
+efficiency, enabled by our novel spline-based architecture. pose a novel spline-based deformation modeling method,
+
+called Motion-Adaptive Spline (MAS), which utilizes a cu-
+3. Preliminary: 3D Gaussian Splatting bic Hermite spline function [2, 8] to accurately model the
+
+continuous trajectory with a small number of control points.
+3DGS [20] represents the radiance field of a scene using For MAS, we introduce a Motion-Adaptive Control points
+anisotropic 3D Gaussians, each of which is formulated as Pruning (MACP) method that effectively adjusts the num-
+
+G(x) = e−
+1
+2 (x−µ)⊤Σ−1(x−µ) (1) ber of control points for each dynamic 3D Gaussian, con-
+
+where x ∈ R3 denotes a 3D position, and µ ∈ R3 and sidering the object’s motion types and degrees.
+Σ ∈ R3×3 represent the mean (center) and the covariance In the following sections, we detail the process of our
+matrix of the 3D Gaussian, respectively. To ensure that Σ MAS method in Sec. 4.2, followed by the camera parame-
+is positive semi-definite and contains physical meaning, it ter estimation process in Sec. 4.3. Finally, we describe the
+is decomposed into a diagonal scaling matrix S ∈ R3×3 overall optimization process in Sec. 4.4.
+of a scale vector s ∈ R3 and a rotation matrix R ∈ R3×3
+
+as Σ = RSS⊤R⊤, where R is parameterized by a learn- 4.2. Motion-Adaptive Spline for 3D Gaussians
+able unit-length quaternion q ∈ R4. In addition, each 3D To represent the continuous trajectory of each dynamic 3D
+Gaussian is parameterized by an opacity σ ∈ R and a color Gaussian for moving objects over time, we propose MAS
+c ∈ R3. To render the color of each pixel, the color and the which modifies the mean parameter to a set of learnable
+opacity of each 3D Gaussian are computed using Eq. 1, and control points. For this, we use the cubic Hermite spline
+the rendered color C is computed by the alpha-blending of
+
+∑ ∏ function [2, 8] to model the mean of each dynamic 3D Gaus-
+the N ordered 3D Gaussians overlapping the pixel as sian at time t as
+
+i−1
+C = i∈N ciαi j=1(1− αj), (2) µ(t) = S(t,P), (3)
+
+26868
+
+
+
+Estimated Static 3D Gaussian Optimization Rendering Ground
+Camera Param. Truth
+
+Dynamic 3D Gaussian Optimization : Motion-Adaptive Spline (MAS) (Sec. 4.2) 
+
+Control Points Initialization
+Cubic Hermite Spline Basis
+
+Eq. 5 Eq. 6
+
+Camera Param. Optim. (Sec. 4.4) Least 
+2D Track Square 
+
+Camera Param. Est.  (Sec. 4.3) 3D Track Approx. Spline
+w/ Initial
+
+Control Points
+Depth
+
+Learn. Param. Eq. 16
+
+Optimization Motion-Adaptive Spline (MAS) Architecture (Eq. 4)
+Camera Param. Optim. 
+
+Only for Static Backgrounds
+(Sec. 4.4)
+
+Photometric Consistency
+Camera Param. Est.  (Sec. 4.3)
+
+World Coord.
+Optimization
+
+Unproj. Reproj.
+The trajectory 
+of a Dynamic Only for Static Backgrounds
+
+3D Gaussian G ① Compute tr  from t  (Eq. 4) Rendered-Depth-Based
+Across t Control Points of G ② Compute tangent Photometric Consistency
+
+Eq. 11 World Coord.
+③ Compute u(t) 
+
+Unproj. Reproj.
+Geometric Consistency
+
+World Coord. Motion-Adaptive Control Points Pruning (MACP)
+
+2D Proj. Keep
+Reduce Eq. 7 Eq. 8
+
+Eq. 13 Error
+1 Ctrl. Point Least Photometric Consistency
+
+Update     to
+Current Spline Square New Spline 2D Proj.
+
+Geometric Consistency
+Approx.
+
+Warm-up Stage (Eq. 14) Main Training Stage (Eq. 15)
+
+Figure 2. Overview of SplineGS. Our SplineGS leverages spline-based functions to model the deformation of dynamic 3D Gaussians
+with a novel Motion-Adaptive Spline (MAS) architecture. It is composed of sets of learnable control points based on a cubic Hermite
+spline function [2, 8] to accurately model the trajectory of each dynamic 3D Gaussian and to achieve faster rendering speed. To avoid any
+preprocessing of camera parameters, i.e., COLMAP-free, we adopt a two-stage optimization: warm-up and main training stages.
+
+where P = {pk|pk ∈ R3, k ∈ 0, . . . , Nc − 1} is a set of Nc It should be noted that we estimate [R̂t|T̂t] and K̂ from a
+learnable control points, serving as an additional attribute sequence of frames only, without using any given ground
+for each dynamic 3D Gaussian, and S(t,P) is defined as truth values, as mentioned in Sec. 4.3. Then, we initialize
+S(t,P) = (2t3r − 3t2 the per-Gaussian control points set P, by a least-square (LS)
+
+r + 1)p⌊ts⌋ + (t3r − 2t2r + tr)m⌊ts⌋
+approximation, such that the spline-described curve fits the
+
++(−2t3r + 3t2r)p⌊t (4)
+s⌋+1 + (t3r − t2r)m⌊ts⌋+1, initial curve by t∑he tracke
+
+Nf−1 ∥∥r, given by
+tr = ts − ⌊ts⌋, ts = tn(Nc − 1), tn = t/(Nf − 1), ∥
+
+min t ∥
+t=0 Wt(φ
+
+r
+t )−
+
+2
+S(t,P) . (6)
+
+where mk is the approximated tangent of the control point P 2
+
+pk, formulated as mk = (pk+1 − pk−1)/2. Note that Motion-Adaptive Control Points Pruning (MACP). An
+S(t,P) indicates the piecewise cubic function to represent excessive number of control points may cause over-fitting
+the whole continuous trajectory of each dynamic 3D Gaus- and decrease the processing speed of our MAS module,
+sian, and Nc can be different from Nf . The optimal Nc can leading to poorer rendering qualities with reduced render-
+be estimated by Motion-Adaptive Control points Pruning ing speed (see Table 3). Furthermore, as each scene exhibits
+(MACP) in the following section. various types and degrees of motion for moving objects,
+Control Points Initialization. To stably optimize S(t,P), the number of control points required for each dynamic 3D
+it is essential to initialize the control points with appropriate Gaussian trajectory should be adaptively adjusted to accom-
+geometric considerations that ensure temporal consistency. modate the scene dynamics. To achieve this, we propose the
+For this, we leverage the long-range 2D tracking [19] and MACP method for MAS, which can generate sparser con-
+the metric depth [38] priors. Let T = {φtr
+
+t |φtr
+t ∈ R2, t = trol points while ensuring no dynamic modeling degrada-
+
+0, . . . , Nf−1} be a 2D track, πK(·) be a projection function tion. MACP is designed on top of 3D Gaussian densifica-
+from the camera space to the image space with the camera tion [20], but focuses on optimizing the number of control
+intrinsic K, and φtr
+
+t be a pixel coordinate corresponding points in MAS. Our MACP computes a new spline function
+to the 2D track T at time t. We unproject each 2D track S(t,P′) after every 3D Gaussian densification step, where
+T to the world space to compute the 3D track aided by P′ = {p′
+
+l|p′
+l ∈ R3, l = 0, . . . , Nc − 2} is a set of Nc − 1
+
+the frame’s metric depth dt and camera extrinsic [R̂t|T̂t] control points, which contains one-fewer control points than
+at time t. The unprojection function W
+
+( t(·) from the image the current set P of control points. We compute the LS ap-
+space to the world space is formulated as proximation to find the reduced set P′ of control points as
+
+Wt(φ
+tr
+t ) = R̂⊤
+
+t π
+−1 φtr )
+
+t ,d
+⊤
+
+t(φ
+tr
+t ) − R̂t T̂t. (5)
+
+K̂
+
+26869
+
+
+
+∑N −1 ∥ ∥
+min f ∥
+
+=0 S(t,P)− 2
+S(t,P′)∥ . (7) where Mt and Mtref are pre-computed motion masks [54]
+
+P′ t 2
+of It and It
+
+Then, the updated optimal set P of control points is assigned ref , respectively. Note that motion mask’s value
+is 0 for static regions, and 1 otherwise.
+
+with the values of P′ if the error E between S(t,P) and Geometric Consistency. Along with the photometric con-
+S(t,P′) is smaller{than a threshold ϵ, as given by sistency, we compute the geometric consistency of unpro-
+
+P′, if E < ϵ jected pixels in 3D space to make our optimization more
+P = , where
+
+P, otherwise stable. T
+8) ∑he g∥
+
+N∑ (
+f−1 ∥eometric consistency loss is formulate∥d as
+
+1 Lgc = φ Mt,t
+t ref(φt)⊙ (Wt(φt)−Wtref(φt→tref))∥2, (13)
+
+2
+E = ∥π (R̂tS(t,P) + T̂ ′
+
+t)− π
+N K̂ K̂(R̂tS(t,P ) + T̂t)∥22.
+
+f t=0 where Wt(φt) and Wtref(φt→tref) are the corresponding 3D
+locations of φt and φt→tref , respectively (see Eq. 5).
+
+By following MACP, each dynamic 3D Gaussian is allowed
+to have a different number of control points. Therefore, the 4.4. Optimization
+MACP can guide our MAS to have a minimal number of To stabilize joint training of the MAS and the camera pa-
+control points when modeling simple motion, while having rameter estimation, we adopt a two-stage optimization pro-
+more control points for more complex motions (see Fig. 8). cess consisting of the warm-up stage and the main training
+4.3. Camera Parameter Estimation stage. In the warm-up stage, we optimize only the cam-
+
+era parameters using the photometric and geometric consis-
+The traditional SfM methods, such as COLMAP [42], fail tency. The total loss in the warm-up stage is given by
+to reliably estimate camera parameters in dynamic scenes
+from in-the-wild monocular videos [30]. For this reason, Lwarm
+
+total = λpcLpc + λgcLgc. (14)
+we propose to estimate camera parameters for joint opti- After the warm-up stage, we obtain the coarsely predicted
+mization with the 3D Gaussian attributes. For each frame at camera intrinsic K̂ and the set of extrinsics [R̂|T̂ ] for all
+time t, we predict a rotation matrix R̂t ∈ R3×3 and a trans- frames, which are then used to initialize the set P of con-
+lation vector T̂t ∈ R3, representing the extrinsic parameters trol points for each dynamic 3D Gaussian, as described in
+of a monocular camera, using a shallow MLP Fθ as Sec. 4.2. In the main training stage, we jointly optimize
+
+[R̂ the static and dynamic 3D Gaussians along with the camera
+t|T̂t] = Fθ(γ(t)), (9)
+
+parameter estimation based on the total loss function as
+where γ(·) is a positional encoding [34]. We also predict
+the focal length Lmain
+
+f̂ of the camera intrinsic K̂ as a learnable total = λrgbLrgb + λdLd + λMLM (15)
+parameter that is shared across all frames in the monocu- + λpcLpc + λd-pcLd-pc + λgcLgc,
+lar video. To accurately optimize the camera parameters, where Lrgb and Ld are the L1 losses between the rendered
+we enforce two types of consistency—photometric and ge- frame and GT frame, and between the rendered depth and
+ometric—for the static background between random refer- GT depth, respectively. In the main training stage, we com-
+ence cameras [R̂tref |T̂tref ] and the target camera [R̂t|T̂t], en- pute an additional photometric consistency loss Ld-pc that
+couraging alignment both visually and structurally. utilizes the rendered depth d̂ of the 3D Gaussians instead of
+Photometric Consistency. Given the pre-computed metric the metric depth [38] prior d as d̂ allows the estimated 3D
+depth [38], the camera intrinsics and extrinsics under op- Gaussian geometry to guide the joint optimization of the
+timization will converge as long as the projected reference camera parameters and 3D Gaussian attributes.
+frame’s color Itref(φt→tref) is aligned to the target frame’s In addition to the camera parameter estimation and im-
+color It(φt). φt→tref is the reference pixel coordinate cor- agery reconstruction losses, we adopt a binary dice loss [45]
+responding to the target fra(me’s pixe)l coordinate φt as LM between the pre-computed motion mask Mt [54] and
+φt→t the rendered motion mask M̂
+
+ref = π −1
+K̂(R̂tref(R̂
+
+⊤
+t π φ ,d φ T̂ t that can be derived from the
+
+K̂ t t( t) − R̂⊤
+t t) + T̂tref). (10)
+
+We refer to such projection alignment as photometric con- dynamic 3D Gaussians. The binary dice loss initially pro-
+sistency, posed in [45] for highly imbalanced segmentation of med-
+
+∑whic∥h is encouraged by the loss Lpc give∥n by
+ical imagery helps encouraging better separation between
+
+Lpc = ∥
+φ Mt,t )⊙ (It(φt)− It φt→t our dynamic and stat
+
+t ref(φt ref( ref))
+∥2, (11)
+2 ∑ic 3D Gaussians as described by
+
+where ⊙ is the Hadamard product [13], and Mt,tref is a ∑2
+L (φ Mt(φt)M̂t(φt) +
+
+t
+M = 1− ) ε
+
+, (16)
+union motion mask that excludes dynamic objects in It and
+
+φ Mt(φt) + M̂t(φt) + ε
+t
+
+Itref for removing the inconsistencies due to dynamic re-
+gions, which is given by where ε is a smooth term to avoid numerical issues.
+
+M̂t(φt) is computed by the alpha-blending of the 3D Gaus-
+Mt,tref(φt) = Mt(φt)Mtref(φt→tref), (12) sians overlapping φt (similar to Eq. 2) as
+
+26870
+
+
+
+Methods Jumping Skating Truck Umbrella Balloon1 Balloon2 Playground Average FPS↑ Tr. (h)↓
+DynNeRF (ICCV’21) [12] 24.68 / 0.090 32.66 / 0.035 28.56 / 0.082 23.26 / 0.137 22.36 / 0.104 27.06 / 0.049 24.15 / 0.080 26.10 / 0.082 0.05 >24
+MonoNeRF (ICCV’23) [46] 24.26 / 0.091 32.06 / 0.044 27.56 / 0.115 23.62 / 0.180 21.89 / 0.129 27.36 / 0.052 22.61 / 0.130 25.62 / 0.106 0.05 N/A
+STGS (CVPR’24) [24] 20.82 / 0.187 24.80 / 0.109 25.01 / 0.103 21.88 / 0.195 20.36 / 0.196 23.12 / 0.124 19.23 / 0.151 22.17 / 0.152 900 0.2
+SCGS (CVPR’24) [14] 15.68 / 0.920 14.88 / 0.908 23.81 / 0.140 21.84 / 0.160 20.17 / 0.179 21.07 / 0.149 20.71 / 0.115 19.74 / 0.367 110 1.1
+D3DGS (CVPR’24) [55] 22.02 / 0.266 24.06 / 0.227 23.04 / 0.247 22.67 / 0.192 21.22 / 0.202 25.86 / 0.118 22.30 / 0.111 23.02 / 0.195 25 1.0
+4DGS (CVPR’24) [52] 22.37 / 0.178 26.72 / 0.084 25.93 / 0.097 22.36 / 0.178 21.89 / 0.153 24.85 / 0.081 21.36 / 0.089 23.64 / 0.123 95 0.25
+SP-GS (ICML’24) [48] 22.13 / 0.468 29.21 / 0.236 27.38 / 0.190 24.88 / 0.323 24.36 / 0.180 29.65 / 0.097 22.29 / 0.234 25.70 / 0.247 180 6.0
+Casual-FVS (ECCV’24) [22] 23.45 / 0.100 29.98 / 0.045 25.22 / 0.090 23.24 / 0.096 23.76 / 0.079 24.15 / 0.081 22.19 / 0.074 24.57 / 0.081 48 0.25
+Kinematic Fields (ECCV’24) [15] 23.74 / 0.102 31.89 / 0.035 28.34 / 0.074 25.46 / 0.098 23.72 / 0.079 26.49 / 0.055 24.64 / 0.053 26.33 / 0.071 0.3 7.0
+E-D3DGS (ECCV’24) [5] 22.39 / 0.180 24.62 / 0.137 26.85 / 0.081 23.60 / 0.145 20.87 / 0.161 24.39 / 0.073 20.79 / 0.124 23.36 / 0.129 45 2.6
+CTNeRF (Pattern Recognition’24) [33] 24.35 / 0.094 33.51 / 0.034 28.27 / 0.084 23.48 / 0.129 22.19 / 0.111 26.86 / 0.048 24.28 / 0.077 26.13 / 0.082 0.1 >24
+D-NPC (Eurographics’25) [18] 24.51 / 0.116 30.22 / 0.061 28.92 / 0.084 24.15 / 0.136 22.26 / 0.161 25.84 / 0.107 23.59 / 0.099 25.64 / 0.109 70 0.27
+Shape-of-Motion (arXiv’24) [49] 22.74 / 0.128 29.12 / 0.048 24.63 / 0.126 23.79 / 0.089 22.74 / 0.120 25.83 / 0.072 20.61 / 0.130 24.21 / 0.102 255 1.1
+Ex4DGS (NeurIPS’24) [21] 18.93 / 0.321 21.92 / 0.233 19.04 / 0.308 19.03 / 0.340 14.69 / 0.503 16.29 / 0.457 14.16 / 0.437 17.72 / 0.371 84 0.65
+DynPoint (NeurIPS’23) [58] 24.69 / 0.097 31.34 / 0.045 29.30 / 0.061 24.59 / 0.086 22.77 / 0.099 27.63 / 0.049 25.37 / 0.039 26.53 / 0.068 0.8 0.5
+RoDynRF (CVPR’23) [30] w/ 25.66 / 0.071 28.68 / 0.040 29.13 / 0.063 24.26 / 0.089 22.37 / 0.103 26.19 / 0.054 24.96 / 0.048 25.89 / 0.067 0.45 >24
+MoSca (arXiv’24) [23] w/ 25.21 / 0.083 32.77 / 0.033 28.22 / 0.090 24.41 / 0.092 23.26 / 0.092 28.90 / 0.042 23.05 / 0.060 26.55 / 0.070 40 0.8
+SplineGS (Ours) w/ 25.62 / 0.064 34.10 / 0.034 27.83 / 0.048 24.60 / 0.076 22.67 / 0.120 29.04 / 0.030 24.47 / 0.046 26.90 / 0.060 400 0.5
+
+RoDynRF (CVPR’23) [30] 24.27 / 0.100 28.71 / 0.046 28.85 / 0.066 23.25 / 0.104 21.81 / 0.122 25.58 / 0.064 25.20 / 0.052 25.38 / 0.079 0.45 >24
+MoSca (arXiv’24) [23] 25.43 / 0.080 32.62 / 0.033 28.29 / 0.086 24.40 / 0.091 23.27 / 0.091 29.01 / 0.042 23.23 / 0.058 26.61 / 0.069 40 1.0
+SplineGS (Ours) 25.50 / 0.068 33.72 / 0.031 28.66 / 0.056 25.61 / 0.071 24.43 / 0.068 28.37 / 0.032 24.19 / 0.047 27.21 / 0.053 400 1.5
+
+Table 1. Novel view synthesis evaluation on the NVIDIA dataset (PSNR↑ / LPIPS↓). Red and Blue denote the best and second-best
+performances, respectively. For Casual-FVS [22], we directly use the results from their paper, as the official code is unavailable. ‘w/’ de-
+notes the use of camera poses obtained by COLMAP [42] for each SfM-free method. ‘Tr.’ denotes the training time. For MonoNeRF [46],
+the training time is omitted as it is not a per-scene optimized model. We use an RTX 3090 Ti GPU for each method.
+
+Figure 3. Visual comparisons for novel view synthesis on the NVIDIA dataset.
+
+∑ ∏ 5.1. Comparison with State-of-the-Art Methods
+i−1
+
+M̂t(φt) = i∈N miαi j=1(1− αj), (17)
+Novel View Synthesis. Table 1 presents a quantitative com-
+
+where mi = 0 if the ith 3D Gaussian is the static 3D Gaus- parison of NVS between our SplineGS and existing SfM-
+sian and mi = 1 otherwise. based [5, 12, 14, 15, 18, 21, 22, 24, 33, 46, 48, 49, 52, 55,
+
+In conjunction, all terms in Lmain
+total guide our SplineGS to 58] and SfM-free [23, 30] methods on the NVIDIA dataset
+
+effectively and efficiently model dynamic 3D scenes from [56]. For this comparison, we follow the evaluation config-
+pure monocular videos, achieving more structural details uration in [30]. The results demonstrate that our SplineGS
+and better temporal consistency than previous works [12, significantly outperforms SOTA methods in both the PSNR
+14, 21–24, 30, 46, 52, 55], without relying on camera pa- and LPIPS [57] metrics. Notably, SplineGS achieves 890×
+rameters obtained from external estimators [42]. and 8,000× faster rendering speed compared to RoDynRF
+5. Experiments [30] and DynNeRF [12], respectively. Ex4DGS [21] and
+
+STGS [24], which are designed for multi-view settings, face
+Implementation Details. We refer readers to the Supple- challenges with inconsistent geometry alignment over time
+mentary material for the details of our implementation. when trained on monocular videos. Fig. 3 shows the qual-
+Datasets. We evaluate both the quantitative and qualita- itative comparison between our SplineGS with the existing
+tive performance of novel view and time synthesis on the methods in [12, 24, 30, 55]. As highlighted by the red
+widely used NVIDIA dataset [56] which features challeng- boxes, our method yields not only higher rendering qual-
+ing monocular videos. Additionally, we assess novel view ity but also dynamic objects more aligned and closer to the
+synthesis performance on in-the-wild monocular videos ground truth. In Fig. 4, we show our superior NVS results
+from the DAVIS dataset [39] which contains an average of for in-the-wild monocular videos from the DAVIS dataset
+69.7 frames per video sequence. [39] compared to the existing methods in [24, 30, 55].
+
+26871
+
+SfM-Free SfM preprocessing
+
+
+
+Methods PSNR↑ LPIPS↓ tOF↓
+DynNeRF (ICCV’21) [12] 23.36 0.219 0.921
+
+SfM preprocessing 4DGS (CVPR’24) [52] 17.07 0.459 6.314
+D3DGS (CVPR’24) [55] 19.63 0.343 3.225
+STGS (CVPR’24) [24] 15.72 0.474 2.105
+
+SfM-Free RoDynRF (CVPR’23) [30] 21.58 0.221 2.138
+SplineGS (Ours) 25.92 0.098 0.703
+
+Table 2. Novel view and time synthesis evaluation on the
+NVIDIA dataset.
+
+Figure 4. Visual comparisons for novel view synthesis on the
+DAVIS dataset.
+
+Figure 5. Visual comparisons for novel view and time synthesis
+Compared to [30] that is also COLMAP-free, SplineGS on the NVIDIA dataset.
+yields considerably more detailed novel views (red boxes)
+as shown in Fig. 4. For the other methods [24, 55], we ob- To further analyze the SplineGS’s ability to model con-
+serve that COLMAP [42] fails to recover camera parame- tinuous trajectories of dynamic 3D Gaussians, we visual-
+ters and initial point clouds on the DAVIS dataset [39], as ize the projected 2D motion tracking of dynamic objects in
+also claimed in [30]. On the other hand, our COLMAP-free pixel space, comparing it with D3DGS [55] and STGS [24],
+SplineGS reconstructs accurate camera parameters that are as shown in Fig. 6. We observe that D3DGS [55] and
+the ones actually used to train [24, 55], which are shown in STGS [24] cannot provide reliable motion tracking for mov-
+Fig. 4 for comparison. More results are in the Supplemen- ing objects, underscoring their limitations in modeling con-
+tary material. tinuous trajectories of dynamic 3D Gaussians. In contrast,
+
+SplineGS provides accurate motion tracking, demonstrating
+Novel View and Time Synthesis. To evaluate the capabil- the effectiveness of MAS for deforming dynamic 3D Gaus-
+ity of SplineGS to model continuous trajectories of mov- sians. Further analysis is in the Supplementary material.
+ing objects in a scene, we compare the novel view and
+time synthesis results of SplineGS with those of NeRF-
+based [12, 30] and 3DGS-based [24, 52, 55] methods. For
+this evaluation, we follow the dataset sampling strategy
+in [25], which samples 24 timestamps from the NVIDIA
+dataset [56]. In addition, to simulate a larger motion, we
+exclude frames with odd time indices in the training sets.
+To ensure all test timestamps are not seen during train- Figure 6. Visual comparisons for motion tracking. We visualize
+ing, and thus, to create a more challenging novel view 2D pixel tracks to analyze motions of dynamic 3D Gaussians.
+and time synthesis validation, we exclude frames with even 5.2. Ablation Study
+time indices in the test sets. Table 2 and Fig. 5 show the
+quantitative and qualitative comparisons for this challeng- Motion-Adaptive Spline (MAS). To demonstrate the effec-
+ing experiment. We observe that the NeRF-based meth- tiveness of MAS, we replace the MAS model with various
+ods, RoDynRF [30] and DynNeRF [12], generate incon- deformation models, including an MLP, a grid-based model,
+sistent artifacts and blurriness for unseen times. Further- polynomial functions of third degree (denoted as ‘Poly
+more, the 3DGS-based methods [24, 52, 55] yield even (3rd)’) and tenth degree (denoted as ‘Poly (10th)’), and a
+more significant degradation when predicting unseen time Bézier curve [9]. For the MLP, grid-based model, and poly-
+indices. In contrast, SplineGS, built upon 3DGS [20] and nomial functions, we apply to them the structures similar to
+equipped with our novel spline-based deformation, provides those in prior works, including D3DGS [55], 4DGS [52],
+SOTA novel view rendering at unseen intermediate times- and STGS [24], respectively. Additionally, we implement
+tamps. Thanks to our MAS, SplineGS naturally and pre- the Bézier curve [9], a commonly used method for curve
+cisely captures the continuous trajectories of moving ob- modeling in computer graphics. Table 3-(a) presents quan-
+jects over time, enhancing the temporal consistency of ren- titative comparisons of each 3D Gaussian trajectory model,
+dered scenes that can be checked in tOF scores [7] of Ta- focusing on rendering quality (PSNR, LPIPS) and deforma-
+ble 2. tion latency per Gaussian, denoted as gdef. This latency re-
+
+26872
+
+
+
+(a) Motion-Adaptive Spline (b) Loss function
+PSNR↑ LPIPS↓ gdef (ns)↓ PSNR↑ LPIPS↓
+
+MLP 23.51 0.125 149.41 w/o Lpc 17.49 0.853
+Grid 25.48 0.090 98.89
+Poly (3rd w/o Lgc 26.33 0.067
+
+) 25.14 0.111 1.80
+Poly (10th) 24.38 0.120 7.71 w/o Ld-pc 26.18 0.066
+Bézier 27.19 0.060 8.78 w/o LM 26.34 0.088
+
+Ours 27.21 0.053 5.63 Ours 27.21 0.053
+
+Figure 7. Visual comparisons for MACP ablation study. (c) Motion-Adaptive Control points Pruning
+PSNR↑ LPIPS↓ gdef (ns)↓
+
+flects the computational time required to estimate the defor- w/o MACP (Nc = 4) 26.62 0.065 5.34
+w/o MACP (Nc = Nf ) 27.08 0.054 6.11
+
+mation of a single dynamic 3D Gaussian. As shown in Ta-
+Ours 27.21 0.053 5.63
+
+ble 3-(a), our MAS model achieves superior rendering qual-
+ity compared to all other deformation models. Consistent Table 3. Ablation studies. We ablate our framework and report
+with analyses in previous works [24, 52, 55], we observe the average results on the NVIDIA dataset with the same setting
+that the MLP and grid-based architectures require substan- as Novel View Synthesis experiment in Sec. 5.1.
+tial computational costs for rendering. Among these meth-
+ods, ‘Poly (3rd)’, as implemented in [24], demonstrates the
+best latency. However, fixed-degree polynomial functions
+have limited flexibility across varying motion complexities
+which adversely impacts rendering performance. To ex-
+plore this further, we experiment with ‘Poly (10th)’ to assess
+changes in modeling capability. This adjustment, however,
+leads to noisier optimization and reduced efficiency, as vari-
+ables under high exponents in ‘Poly (10th)’ lead to numeri-
+cal instability. The Bézier curve [9] offers the second-best
+rendering quality, but its latency remains higher than our
+MAS due to its recursive nature of computation.
+Motion-Adaptive Control Points Pruning (MACP). To Figure 8. Analysis of MACP’s Efficacy. (a) Nc Heatmaps as
+assess the effectiveness of our MACP technique for MAS, the averaged Nc values of dynamic 3D Gaussians and their corre-
+we compare our full model with MACP against other ver- sponding rendered frames Ît for ‘Balloon2’ and ‘Skating’ scenes.
+sions of our model with two fixed numbers of control points (b) Histograms of the number of control points (Nc) in percent-
+Nc = 4 and Nc = Nf . As shown in Table 3-(c) and Fig. ages (%) of dynamic 3D Gaussians in two scenes.
+7, our SplineGS with MACP achieves a good trade-off be-
+tween rendering quality and gdef compared to the ablated dynamic 3D Gaussians can be represented using a minimal
+models with fixed N Nc, thanks to our MACP. While ‘Balloon2’ has more evenly
+
+c. Using Nc = 4 for every dynamic
+3D Gaussian limits the motion modeling capacity of MAS, distributed Nc due to more complex and diverse motion.
+resulting in significantly lower metrics and visible artifacts Loss Functions. Table 3-(b) shows the effectiveness of
+in the dynamic regions. Moreover, an excessive Nc = Nf each loss for our overall SplineGS architecture. As noted,
+decreases the rendering speed of our MAS module and still no consistent camera parameters can be learned without
+falls short of the quality achieved by our full model with Lpc, drastically impacting the rendering quality of the dy-
+MACP, potentially due to motion overfitting. Fig. 8 shows namic 3D Gaussians. Moreover, our Lgc, Ld-pc and LM can
+the distribution of Nc values after optimization with MACP considerably impact the overall rendering quality.
+across scenes of varying motion complexities. In Fig. 8-(a),
+we visualize ‘Nc Heatmap’ that contains the pixel-wise av- 6. Conclusion
+eraged Nc values of the dynamic 3D Gaussians needed to
+render the 2D pixels (red higher, blue lower number of con- We present SplineGS, a COLMAP-free dynamic 3DGS
+trol points). As shown, the simpler motions in these scenes, framework designed for novel spatio-temporal view syn-
+such as those of the human bodies, can be modeled by the thesis from monocular videos. Leveraging our innovative
+dynamic 3D Gaussians with smaller averages of Nc values, Motion-Adaptive Spline (MAS) for dynamic motion mod-
+whereas the objects with complex and extensive motions eling, SplineGS efficiently renders high-quality novel views
+(e.g., balloon) require higher averaged Nc values. Fig. 8- from complex in-the-wild videos. The effectiveness of our
+(b) presents the corresponding histogram of Nc values for approach is validated through extensive quantitative and
+the scenes’ dynamic 3D Gaussians. For sequences with qualitative comparisons, significantly outperforming the ex-
+simple motion, such as ‘Skating’, the trajectories of most isting SOTA methods with very fast rendering speed.
+
+26873
+
+
+
+Acknowledgement [15] Woobin Im, Geonho Cha, Sebin Lee, Jumin Lee, Juhyeong
+Seon, Dongyoon Wee, and Sung-Eui Yoon. Regularizing
+
+This work was supported by Institute of Information & dynamic radiance fields with kinematic fields. In European
+communications Technology Planning & Evaluation (IITP) Conference on Computer Vision, pages 312–328. Springer,
+grant funded by the Korean Government [Ministry of 2024. 6
+Science and ICT (Information and Communications Tech-
+nology)] (Project Number: RS-2022-00144444, Project [16] Wei Jiang, Kwang Moo Yi, Golnoosh Samei, Oncel Tuzel,
+
+Title: Deep Learning Based Visual Representational Learn- and Anurag Ranjan. Neuman: Neural human radiance field
+
+ing and Rendering of Static and Dynamic Scenes, 100%). from a single video. In ECCV, 2022. 2
+[17] Yifan Jiang, Peter Hedman, Ben Mildenhall, Dejia Xu,
+
+Jonathan T Barron, Zhangyang Wang, and Tianfan Xue.
+
+References Alignerf: High-fidelity neural radiance fields via alignment-
+aware training. In CVPR, 2023. 3
+
+[1] Fast dynamic radiance fields with time-aware neural voxels. [18] Moritz Kappel, Florian Hahlbohm, Timon Scholz, Susana
+In SIGGRAPH Asia 2022 Conference Papers, 2022. 2 Castillo, Christian Theobalt, Martin Eisemann, Vladislav
+
+[2] J Harold Ahlberg, Edwin Norman Nilson, and Golyanik, and Marcus Magnor. D-npc: Dynamic neural
+Joseph Leonard Walsh. The Theory of Splines and Their point clouds for non-rigid view synthesis from monocular
+Applications: Mathematics in Science and Engineering: video. arXiv preprint arXiv:2406.10078, 2024. 6
+A Series of Monographs and Textbooks, Vol. 38. Elsevier, [19] Nikita Karaev, Ignacio Rocco, Benjamin Graham, Natalia
+2016. 2, 3, 4 Neverova, Andrea Vedaldi, and Christian Rupprecht. Co-
+
+[3] ShahRukh Athar, Zexiang Xu, Kalyan Sunkavalli, Eli tracker: It is better to track together. arXiv, 2023. 4
+Shechtman, and Zhixin Shu. Rignerf: Fully controllable neu- [20] Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler,
+ral 3d portraits. In CVPR, 2022. 2 and George Drettakis. 3d gaussian splatting for real-time
+
+[4] Benjamin Attal, Jia-Bin Huang, Christian Richardt, Michael radiance field rendering. ACM Trans. Graph., 2023. 2, 3, 4,
+Zollhoefer, Johannes Kopf, Matthew O’Toole, and Changil 7
+Kim. Hyperreel: High-fidelity 6-dof video with ray- [21] Junoh Lee, Chang-Yeon Won, Hyunjun Jung, Inhwan Bae,
+conditioned sampling. In CVPR, 2023. 2 and Hae-Gon Jeon. Fully explicit dynamic gaussian splat-
+
+[5] Jeongmin Bae, Seoha Kim, Youngsik Yun, Hahyun Lee, ting. In NeurIPS, 2024. 3, 6
+Gun Bang, and Youngjung Uh. Per-gaussian embedding- [22] Yao-Chih Lee, Zhoutong Zhang, Kevin Blackburn-Matzen,
+based deformation for deformable 3d gaussian splatting. In Simon Niklaus, Jianming Zhang, Jia-Bin Huang, and Feng
+European Conference on Computer Vision, pages 321–335. Liu. Fast view synthesis of casual videos with soup-of-
+Springer, 2024. 6 planes. In ECCV, 2024. 3, 6
+
+[6] Ang Cao and Justin Johnson. Hexplane: A fast representa- [23] Jiahui Lei, Yijia Weng, Adam Harley, Leonidas Guibas, and
+tion for dynamic scenes. In CVPR, 2023. 2 Kostas Daniilidis. Mosca: Dynamic gaussian fusion from
+
+[7] Mengyu Chu, You Xie, Jonas Mayer, Laura Leal-Taixé, casual videos via 4d motion scaffolds. arXiv, 2024. 3, 6
+and Nils Thuerey. Learning temporal coherence via self- [24] Zhan Li, Zhang Chen, Zhong Li, and Yi Xu. Spacetime gaus-
+supervision for gan-based video generation. ACM Transac- sian feature splatting for real-time dynamic view synthesis.
+tions on Graphics (TOG), 2020. 7 In CVPR. 1, 2, 3, 6, 7, 8
+
+[8] C De Boor. A practical guide to splines. Springer-Verlag [25] Zhengqi Li, Simon Niklaus, Noah Snavely, and Oliver Wang.
+google schola, 1978. 2, 3, 4 Neural scene flow fields for space-time view synthesis of dy-
+
+[9] Gerald Farin. Curves and surfaces for CAGD: a practical namic scenes. In CVPR, 2021. 2, 7
+guide. Elsevier, 2001. 2, 7, 8 [26] Zhengqi Li, Qianqian Wang, Forrester Cole, Richard Tucker,
+
+[10] Sara Fridovich-Keil, Giacomo Meanti, Frederik Rahbæk and Noah Snavely. Dynibar: Neural dynamic image-based
+Warburg, Benjamin Recht, and Angjoo Kanazawa. K-planes: rendering. In CVPR, 2023. 2
+Explicit radiance fields in space, time, and appearance. In [27] Yiqing Liang, Numair Khan, Zhengqin Li, Thu Nguyen-
+CVPR, 2023. 2 Phuoc, Douglas Lanman, James Tompkin, and Lei Xiao.
+
+[11] Yang Fu, Sifei Liu, Amey Kulkarni, Jan Kautz, Alexei A. Gaufre: Gaussian deformation fields for real-time dynamic
+Efros, and Xiaolong Wang. Colmap-free 3d gaussian splat- novel view synthesis. arXiv, 2023. 2, 3
+ting. In CVPR, 2024. 3 [28] Chen-Hsuan Lin, Wei-Chiu Ma, Antonio Torralba, and Si-
+
+[12] Chen Gao, Ayush Saraf, Johannes Kopf, and Jia-Bin Huang. mon Lucey. Barf: Bundle-adjusting neural radiance fields.
+Dynamic view synthesis from dynamic monocular video. In In ICCV, 2021. 3
+ICCV, 2021. 2, 6, 7 [29] Philipp Lindenberger, Paul-Edouard Sarlin, Viktor Larsson,
+
+[13] Roger A Horn and Charles R Johnson. Matrix analysis. and Marc Pollefeys. Pixel-perfect structure-from-motion
+Cambridge university press, 2012. 5 with featuremetric refinement. In ICCV, 2021. 3
+
+[14] Yi-Hua Huang, Yang-Tian Sun, Ziyi Yang, Xiaoyang Lyu, [30] Yu-Lun Liu, Chen Gao, Andreas Meuleman, Hung-Yu
+Yan-Pei Cao, and Xiaojuan Qi. Sc-gs: Sparse-controlled Tseng, Ayush Saraf, Changil Kim, Yung-Yu Chuang, Jo-
+gaussian splatting for editable dynamic scenes. CVPR, 2024. hannes Kopf, and Jia-Bin Huang. Robust dynamic radiance
+2, 6 fields. In CVPR, 2023. 2, 3, 5, 6, 7
+
+26874
+
+
+
+[31] Jonathon Luiten, Georgios Kopanas, Bastian Leibe, and [46] Fengrui Tian, Shaoyi Du, and Yueqi Duan. MonoN-
+Deva Ramanan. Dynamic 3d gaussians: Tracking by per- eRF: Learning a generalizable dynamic radiance field from
+sistent dynamic view synthesis. In 3DV, 2024. 2 monocular videos. In ICCV, 2023. 6
+
+[32] Quan Meng, Anpei Chen, Haimin Luo, Minye Wu, Hao Su, [47] Edgar Tretschk, Ayush Tewari, Vladislav Golyanik, Michael
+Lan Xu, Xuming He, and Jingyi Yu. Gnerf: Gan-based neu- Zollhöfer, Christoph Lassner, and Christian Theobalt. Non-
+ral radiance field without posed camera. In ICCV, 2021. 3 rigid neural radiance fields: Reconstruction and novel view
+
+[33] Xingyu Miao, Yang Bai, Haoran Duan, Fan Wan, Yawen synthesis of a dynamic scene from monocular video. In
+Huang, Yang Long, and Yefeng Zheng. Ctnerf: Cross-time ICCV, 2021. 2
+transformer for dynamic neural radiance field from monocu- [48] Diwen Wan, Ruijie Lu, and Gang Zeng. Superpoint gaus-
+lar video. Pattern Recognition, 156:110729, 2024. 6 sian splatting for real-time high-fidelity dynamic scene re-
+
+[34] Ben Mildenhall, Pratul P. Srinivasan, Matthew Tancik, construction. arXiv preprint arXiv:2406.03697, 2024. 6
+Jonathan T. Barron, Ravi Ramamoorthi, and Ren Ng. Nerf: [49] Qianqian Wang, Vickie Ye, Hang Gao, Jake Austin, Zhengqi
+Representing scenes as neural radiance fields for view syn- Li, and Angjoo Kanazawa. Shape of motion: 4d reconstruc-
+thesis. In ECCV, 2020. 2, 5 tion from a single video. arXiv preprint arXiv:2407.13764,
+
+[35] Keunhong Park, Utkarsh Sinha, Jonathan T Barron, Sofien 2024. 6
+Bouaziz, Dan B Goldman, Steven M Seitz, and Ricardo [50] Zirui Wang, Shangzhe Wu, Weidi Xie, Min Chen, and Vic-
+Martin-Brualla. Nerfies: Deformable neural radiance fields. tor Adrian Prisacariu. Nerf-: Neural radiance fields without
+In ICCV, 2021. 2 known camera parameters. CoRR, 2021. 3
+
+[36] Keunhong Park, Utkarsh Sinha, Peter Hedman, Jonathan T. [51] Chung-Yi Weng, Brian Curless, Pratul P. Srinivasan,
+Barron, Sofien Bouaziz, Dan B Goldman, Ricardo Martin- Jonathan T. Barron, and Ira Kemelmacher-Shlizerman. Hu-
+Brualla, and Steven M. Seitz. Hypernerf: A higher- manNeRF: Free-viewpoint rendering of moving people from
+dimensional representation for topologically varying neural monocular video. In CVPR, 2022. 2
+radiance fields. ACM Trans. Graph., 2021. 2 [52] Guanjun Wu, Taoran Yi, Jiemin Fang, Lingxi Xie, Xiaopeng
+
+[37] Keunhong Park, Philipp Henzler, Ben Mildenhall, Zhang, Wei Wei, Wenyu Liu, Qi Tian, and Xinggang Wang.
+Jonathan T. Barron, and Ricardo Martin-Brualla. Camp: 4d gaussian splatting for real-time dynamic scene rendering.
+Camera preconditioning for neural radiance fields. ACM In CVPR. 2, 6, 7, 8
+Trans. Graph., 2023. 3 [53] Gengshan Yang, Minh Vo, Neverova Natalia, Deva Ra-
+
+[38] Luigi Piccinelli, Yung-Hsu Yang, Christos Sakaridis, Mattia manan, Vedaldi Andrea, and Joo Hanbyul. Banmo: Building
+Segu, Siyuan Li, Luc Van Gool, and Fisher Yu. Unidepth: animatable 3d neural models from many casual videos. In
+Universal monocular metric depth estimation. In CVPR, CVPR, 2022. 2
+2024. 4, 5
+
+[54] Jinyu Yang, Mingqi Gao, Zhe Li, Shang Gao, Fangjing
+[39] Jordi Pont-Tuset, Federico Perazzi, Sergi Caelles, Pablo Ar-
+
+Wang, and Feng Zheng. Track anything: Segment anything
+beláez, Alex Sorkine-Hornung, and Luc Van Gool. The 2017
+
+meets videos. arXiv, 2023. 5
+davis challenge on video object segmentation. arXiv, 2018.
+1, 6, 7 [55] Ziyi Yang, Xinyu Gao, Wen Zhou, Shaohui Jiao, Yuqing
+
+[40] Albert Pumarola, Enric Corona, Gerard Pons-Moll, and Zhang, and Xiaogang Jin. Deformable 3d gaussians for high-
+Francesc Moreno-Noguer. D-nerf: Neural radiance fields for fidelity monocular dynamic scene reconstruction. In CVPR,
+dynamic scenes. In CVPR, 2021. 2 2024. 1, 2, 6, 7, 8
+
+[41] Vincent Raoult, Sarah Reid-Anderson, Andreas Ferri, and [56] Jae Shin Yoon, Kihwan Kim, Orazio Gallo, Hyun Soo Park,
+Jane E Williamson. How reliable is structure from motion and Jan Kautz. Novel view synthesis of dynamic scenes
+(sfm) over time and between observers? a case study using with globally coherent depths from a monocular camera. In
+coral reef bommies. Remote Sensing, 2017. 3 CVPR, 2020. 1, 6, 7
+
+[42] Johannes L Schonberger and Jan-Michael Frahm. Structure- [57] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman,
+from-motion revisited. In CVPR, 2016. 1, 2, 3, 5, 6, 7 and Oliver Wang. The unreasonable effectiveness of deep
+
+[43] Ruizhi Shao, Zerong Zheng, Hanzhang Tu, Boning Liu, features as a perceptual metric. In CVPR, 2018. 6
+Hongwen Zhang, and Yebin Liu. Tensor4d: Efficient neural [58] Kaichen Zhou, Jia-Xing Zhong, Sangyun Shin, Kai Lu,
+4d decomposition for high-fidelity dynamic reconstruction Yiyuan Yang, Andrew Markham, and Niki Trigoni. Dyn-
+and rendering. In CVPR, 2023. 2 point: Dynamic neural point for view synthesis. Advances
+
+[44] Liangchen Song, Anpei Chen, Zhong Li, Zhang Chen, Lele in Neural Information Processing Systems, 36:69532–69545,
+Chen, Junsong Yuan, Yi Xu, and Andreas Geiger. Nerf- 2023. 6
+player: A streamable dynamic scene representation with de-
+composed neural radiance fields. IEEE Transactions on Vi-
+sualization and Computer Graphics, 2023. 2
+
+[45] Carole H. Sudre, Wenqi Li, Tom Vercauteren, Sebastien
+Ourselin, and M. Jorge Cardoso. Generalised dice overlap as
+a deep learning loss function for highly unbalanced segmen-
+tations. In Deep Learning in Medical Image Analysis and
+Multimodal Learning for Clinical Decision Support, 2017. 5
+
+26875
