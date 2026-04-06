@@ -1,157 +1,237 @@
+"""
+简单的eval脚本 - 用train_aligned.py生成的模型进行推理并生成图像
+"""
 import os
 import sys
 import torch
-sys.path.append(os.path.join(sys.path[0], ".."))
-import cv2
 import numpy as np
 from argparse import ArgumentParser
 from PIL import Image
-from tqdm import tqdm
 
-from arguments import ModelHiddenParams, ModelParams, OptimizationParams, PipelineParams
+from arguments import ModelParams, OptimizationParams, PipelineParams, ModelHiddenParams
 from gaussian_renderer import render_infer
-from scene import GaussianModel, Scene
-from utils.main_utils import get_pixels
+from scene import GaussianModel, Scene, dataset_readers, deformation
+from utils.graphics_utils import getWorld2View2
 from utils.image_utils import psnr
 
+try:
+    import lpips
+    LPIPS_AVAILABLE = True
+except ImportError:
+    LPIPS_AVAILABLE = False
+    print("[WARNING] LPIPS not available, LPIPS scores will be skipped")
 
-if __name__ == "__main__":
-    parser = ArgumentParser(description="Eval aligned model - render video from train_aligned.py checkpoint")
+
+def normalize_image(img):
+    """用于LPIPS的图像归一化"""
+    return (2.0 * img - 1.0)[None, ...]
+
+
+def eval_aligned_model(checkpoint_path, data_dir, output_dir, split='test', save_images=True):
+    """
+    评估train_aligned.py生成的模型
+    
+    Args:
+        checkpoint_path: 模型checkpoint所在目录 (如 output/balloon1_aligned/point_cloud/iteration_5000/)
+        data_dir: 数据集目录
+        output_dir: 输出目录
+        split: 'test' 或 'train'
+        save_images: 是否保存图像
+    """
+    
+    # ========== 参数设置 ==========
+    parser = ArgumentParser(description="Eval script for aligned model")
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
     hp = ModelHiddenParams(parser)
-
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to checkpoint directory (e.g., output/balloon1_aligned/point_cloud/iteration_5000)")
-    parser.add_argument("--expname", type=str, default="eval_aligned")
-    parser.add_argument("--configs", type=str, default="")
-
-    args = parser.parse_args(sys.argv[1:])
-    if args.configs:
-        import mmengine as mmcv
-        from utils.params_utils import merge_hparams
-        config = mmcv.Config.fromfile(args.configs)
-        args = merge_hparams(args, config)
-
-    # 1. 加载数据集和模型配置
+    
+    parser.add_argument("--iteration", type=int, default=-1)
+    
+    # 手动构建args对象
+    args = parser.parse_args([])
+    args.source_path = data_dir
+    args.output_path = output_dir
+    
+    # ========== 加载数据集 ==========
     dataset = lp.extract(args)
     hyper = hp.extract(args)
+    
+    # 初始化静态和动态高斯
     stat_gaussians = GaussianModel(dataset)
     dyn_gaussians = GaussianModel(dataset)
-    opt = op.extract(args)
     
-    # 2. 加载场景
+    print(f"Loading scene from {data_dir}")
     scene = Scene(dataset, dyn_gaussians, stat_gaussians, load_coarse=None)
-    dyn_gaussians.create_pose_network(hyper, scene.getTrainCameras())
-
-    # 3. 加载checkpoint
-    print(f"Loading checkpoint from: {args.checkpoint}")
-    dyn_gaussians.load_ply(os.path.join(args.checkpoint, "point_cloud.ply"))
-    stat_gaussians.load_ply(os.path.join(args.checkpoint, "point_cloud_static.ply"))
-    dyn_gaussians.load_model(args.checkpoint)
+    
+    # ========== 加载模型权重 ==========
+    print(f"Loading checkpoint from {checkpoint_path}")
+    
+    # 加载点云
+    dyn_pt_path = os.path.join(checkpoint_path, "point_cloud.ply")
+    stat_pt_path = os.path.join(checkpoint_path, "point_cloud_static.ply")
+    
+    if not os.path.exists(dyn_pt_path):
+        print(f"[ERROR] Point cloud not found: {dyn_pt_path}")
+        return
+    
+    dyn_gaussians.load_ply(dyn_pt_path)
+    stat_gaussians.load_ply(stat_pt_path)
+    
+    print("✓ Loaded point clouds")
+    
+    # 加载模型配置（包括deformation network等）
+    try:
+        dyn_gaussians.load_model(checkpoint_path)
+        print("✓ Loaded deformation model")
+    except Exception as e:
+        print(f"[WARNING] Failed to load deformation model: {e}")
+    
+    # 设置为eval模式
     dyn_gaussians._posenet.eval()
-
-    # 4. 获取像素和viewdir信息
-    pixels = get_pixels(
-        scene.train_camera.dataset[0].metadata.image_size_x,
-        scene.train_camera.dataset[0].metadata.image_size_y,
-        use_center=True,
-    )
-    batch_shape = pixels.shape[:-1]
-    pixels = np.reshape(pixels, (-1, 2))
+    stat_gaussians._posenet.eval() if hasattr(stat_gaussians, '_posenet') else None
     
-    y = (pixels[..., 1] - scene.train_camera.dataset[0].metadata.principal_point_y) / \
-        dyn_gaussians._posenet.focal_bias.exp().detach().cpu().numpy()
-    x = (pixels[..., 0] - scene.train_camera.dataset[0].metadata.principal_point_x) / \
-        dyn_gaussians._posenet.focal_bias.exp().detach().cpu().numpy()
-    
-    viewdirs = np.stack([x, y, np.ones_like(x)], axis=-1)
-    local_viewdirs = viewdirs / np.linalg.norm(viewdirs, axis=-1, keepdims=True)
-
-    # 5. 后台颜色
-    bg_color = [1] * 9 + [0] if dataset.white_background else [0] * 9 + [0]
+    # ========== 准备背景颜色 ==========
+    if dataset.white_background:
+        bg_color = [1, 1, 1, -10]
+    else:
+        bg_color = [0, 0, 0, -10]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+    pipe = pp.extract(args)
     
-    # 6. 获取测试摄像机
-    test_cams = scene.getTestCameras()
-    train_cams = scene.getTrainCameras()
+    # ========== 获取cameras ==========
+    if split == 'test':
+        cameras = scene.getTestCameras()
+        split_name = 'test'
+    else:
+        cameras = scene.getTrainCameras()
+        split_name = 'train'
     
-    print(f"\nRender evaluation from checkpoint: {args.checkpoint}")
-    print(f"Expname: {args.expname}")
+    if not cameras or len(cameras) == 0:
+        print(f"[ERROR] No {split} cameras found")
+        return
     
-    # 7. 渲染并生成视频
-    output_base = f"./output/{args.expname}"
+    print(f"Evaluating on {len(cameras)} {split_name} cameras")
     
-    for config_name, cameras in [("test", test_cams), ("train", train_cams)]:
-        if not cameras or len(cameras) == 0:
-            print(f"⚠️  No {config_name} cameras found, skipping")
-            continue
+    # ========== 初始化metrics ==========
+    psnr_list = []
+    lpips_list = []
+    render_times = []
+    
+    if LPIPS_AVAILABLE:
+        lpips_loss = lpips.LPIPS(net="alex").cuda()
+    
+    # ========== 推理循环 ==========
+    os.makedirs(os.path.join(output_dir, split_name), exist_ok=True)
+    
+    start_event = torch.cuda.Event(enable_timing=True)
+    end_event = torch.cuda.Event(enable_timing=True)
+    
+    print(f"\n{'Frame':<6} {'PSNR':<8} {'LPIPS':<8} {'Time(ms)':<10}")
+    print("-" * 40)
+    
+    with torch.no_grad():
+        for frame_idx, viewpoint in enumerate(cameras):
+            # Warmup (skip first frame)
+            if frame_idx == 0:
+                for _ in range(3):
+                    _ = render_infer(
+                        viewpoint, stat_gaussians, dyn_gaussians, background
+                    )
             
-        print(f"\n{'='*60}")
-        print(f"Rendering {config_name} set ({len(cameras)} frames)")
-        print(f"{'='*60}")
-        
-        output_dir = os.path.join(output_base, config_name)
-        os.makedirs(output_dir, exist_ok=True)
-        
-        rendered_frames = []
-        psnr_list = []
-        
-        with torch.no_grad():
-            for idx, viewpoint in enumerate(tqdm(cameras, desc=f"Rendering {config_name}")):
-                # 更新相机姿态
-                time_in = torch.tensor(viewpoint.time).float().cuda()
-                pred_R, pred_T = dyn_gaussians._posenet(time_in.view(1, 1))
-                R_ = torch.transpose(pred_R, 2, 1).detach().cpu().numpy()
-                t_ = pred_T.detach().cpu().numpy()
+            # 渲染
+            torch.cuda.synchronize()
+            start_event.record()
+            
+            render_pkg = render_infer(
+                viewpoint, stat_gaussians, dyn_gaussians, background
+            )
+            
+            end_event.record()
+            torch.cuda.synchronize()
+            
+            render_time = start_event.elapsed_time(end_event)
+            render_times.append(render_time)
+            
+            # 获取渲染结果
+            image = render_pkg["render"]
+            image = torch.clamp(image, 0.0, 1.0)
+            
+            # 计算指标
+            gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+            
+            psnr_val = psnr(image, gt_image, mask=None).mean().double().item()
+            psnr_list.append(psnr_val)
+            
+            lpips_val = None
+            if LPIPS_AVAILABLE:
+                lpips_val = lpips_loss.forward(
+                    normalize_image(image), 
+                    normalize_image(gt_image)
+                ).item()
+                lpips_list.append(lpips_val)
+            
+            # 打印进度
+            lpips_str = f"{lpips_val:.4f}" if lpips_val else "N/A"
+            print(f"{frame_idx:<6} {psnr_val:<8.4f} {lpips_str:<8} {render_time:<10.2f}")
+            
+            # 保存图像
+            if save_images:
+                img_np = (np.clip(
+                    image.permute(1, 2, 0).detach().cpu().numpy(), 
+                    0, 1
+                ) * 255).astype("uint8")
                 
-                viewpoint.update_cam(
-                    R_[0], t_[0], local_viewdirs, batch_shape,
-                    dyn_gaussians._posenet.focal_bias.exp().detach().cpu().numpy(),
-                )
-                
-                # 渲染
-                render_pkg = render_infer(viewpoint, stat_gaussians, dyn_gaussians, background)
-                image = render_pkg["render"]
-                image = torch.clamp(image, 0.0, 1.0)
-                
-                # 转换为numpy
-                img_np = (np.clip(image.permute(1, 2, 0).detach().cpu().numpy(), 0, 1) * 255).astype("uint8")
-                rendered_frames.append(img_np)
-                
-                # 计算PSNR（如果有GT图像）
-                if hasattr(viewpoint, 'original_image') and viewpoint.original_image is not None:
-                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    psnr_val = psnr(image, gt_image).mean().item()
-                    psnr_list.append(psnr_val)
-                
-                # 保存单帧
                 img_pil = Image.fromarray(img_np)
-                img_pil.save(os.path.join(output_dir, f"frame_{idx:04d}.png"))
-        
-        # 生成视频
-        if rendered_frames:
-            h, w = rendered_frames[0].shape[:2]
-            video_path = os.path.join(output_base, f"video_{config_name}.mp4")
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(video_path, fourcc, 24.0, (w, h))
-            
-            for frame in rendered_frames:
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                out.write(frame_bgr)
-            out.release()
-            
-            print(f"✅ Video saved: {video_path}")
-            print(f"   Frames: {len(rendered_frames)}, Resolution: {w}x{h}")
-            
-            if psnr_list:
-                avg_psnr = np.mean(psnr_list)
-                print(f"   Avg PSNR: {avg_psnr:.4f}")
-            
-            print(f"   Images saved to: {output_dir}")
+                img_path = os.path.join(output_dir, split_name, f"img_{frame_idx:04d}.png")
+                img_pil.save(img_path)
     
-    print(f"\n{'='*60}")
-    print(f"✅ Evaluation complete!")
-    print(f"Output: {output_base}")
-    print(f"{'='*60}\n")
+    # ========== 打印总结 ==========
+    print("-" * 40)
+    avg_psnr = np.mean(psnr_list)
+    avg_time = np.mean(render_times)
+    fps = 1000.0 / avg_time if avg_time > 0 else 0
+    
+    print(f"\n📊 Summary ({split_name} split):")
+    print(f"  Average PSNR: {avg_psnr:.4f}")
+    if LPIPS_AVAILABLE and lpips_list:
+        avg_lpips = np.mean(lpips_list)
+        print(f"  Average LPIPS: {avg_lpips:.4f}")
+    print(f"  Average render time: {avg_time:.2f} ms")
+    print(f"  FPS: {fps:.2f}")
+    print(f"  Images saved to: {os.path.join(output_dir, split_name)}/")
+    
+
+if __name__ == "__main__":
+    parser = ArgumentParser(description="Eval aligned SplineGS model")
+    parser.add_argument("--checkpoint", type=str, required=True, 
+                        help="Path to checkpoint directory (e.g., output/balloon1_aligned/point_cloud/iteration_5000/)")
+    parser.add_argument("--data-dir", type=str, required=True, 
+                        help="Path to dataset directory")
+    parser.add_argument("--output-dir", type=str, default="eval_output", 
+                        help="Output directory for images and results")
+    parser.add_argument("--split", type=str, choices=['test', 'train'], default='test',
+                        help="Which split to evaluate on")
+    parser.add_argument("--no-save-images", action='store_true',
+                        help="Don't save rendered images")
+    
+    args = parser.parse_args()
+    
+    print("="*60)
+    print("🚀 Evaluating train_aligned.py model")
+    print("="*60)
+    print(f"Checkpoint: {args.checkpoint}")
+    print(f"Data dir: {args.data_dir}")
+    print(f"Output dir: {args.output_dir}")
+    print(f"Split: {args.split}")
+    print("="*60)
+    
+    eval_aligned_model(
+        checkpoint_path=args.checkpoint,
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        split=args.split,
+        save_images=not args.no_save_images
+    )
+    
+    print("\n✅ Evaluation complete!")
