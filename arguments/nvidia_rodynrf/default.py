@@ -1,5 +1,5 @@
 OptimizationParams = dict(
-    iterations=25_000,
+    iterations=5_000,
     coarse_batch_size=2,
     fine_batch_size=2,
     coarse_iterations=5_000,

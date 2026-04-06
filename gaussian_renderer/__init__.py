@@ -599,12 +599,12 @@ def render_infer(viewpoint_camera,
     means3D_final, scales_final, rotations_final, opacity_final = means3D, scales, rotations, opacity
 
 
-    # Combine stat and dyn gaussians
-    means3D_final = torch.cat((smeans3D_final, means3D_final), 0)
-    scales_final = torch.cat((sscales_final, scales_final), 0)
-    rotations_final = torch.cat((srotations_final, rotations_final), 0)
-    opacity_final = torch.cat((sopacity_final, opacity_final), 0)
-    colors_precomp_final = torch.cat((stat_colors_precomp, colors_precomp), 0)
+    # Use only dyn gaussians to generate only the dynamic region
+    means3D_final = means3D_final
+    scales_final = scales_final
+    rotations_final = rotations_final
+    opacity_final = opacity_final
+    colors_precomp_final = colors_precomp
 
     rendered_image, _, _ = rasterization(
         means=means3D_final,

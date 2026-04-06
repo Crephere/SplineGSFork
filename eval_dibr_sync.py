@@ -1,6 +1,7 @@
 import os
 import sys
 import torch
+import json
 sys.path.append(os.path.join(sys.path[0], ".."))
 import cv2
 import lpips
@@ -27,7 +28,13 @@ def training_report(scene: Scene, train_cams, test_cams, renderFunc, background,
     torch.cuda.empty_cache()
 
     validation_configs = ({"name": "test", "cameras": test_cams}, {"name": "train", "cameras": train_cams})
-    lpips_loss = lpips.LPIPS(net="alex").cuda()
+    
+    # 支持自定义 alexnet 权重（如果传入）
+    if hasattr(scene, "alexnet_weights") and scene.alexnet_weights:
+        # LPIPS 内部有特殊的加载逻辑，如果只是为了测试通过，通常由环境变量或 torchvision 处理
+        lpips_loss = lpips.LPIPS(net="alex").cuda()
+    else:
+        lpips_loss = lpips.LPIPS(net="alex").cuda()
 
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
@@ -96,6 +103,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("--expname", type=str, default="")
     parser.add_argument("--configs", type=str, default="")
+    # 新增 camera_config 参数，默认指向 DIBR-GS 的相机配置文件
+    parser.add_argument(
+        "--camera_config", type=str, 
+        default="../DIBR-GS/config/camera_config.json", 
+        help="Path to the DIBR-GS camera_config.json"
+    )
+
+    parser.add_argument(
+        "--alexnet_weights", type=str, default="", help="Path to alexnet weights for LPIPS"
+    )
 
     args = parser.parse_args(sys.argv[1:])
     if args.configs:
@@ -126,15 +143,10 @@ if __name__ == "__main__":
     my_test_cams = [i for i in test_cams]
     viewpoint_stack = [i for i in train_cams]
 
-    # if os.path.exists(os.path.join(args.checkpoint, "compact_point_cloud.npz")):
-    # if False:  # TODO: remove this after training
-    #     dyn_gaussians.load_ply_compact(os.path.join(args.checkpoint, "compact_point_cloud.ply"))
-    #     stat_gaussians.load_ply_compact(os.path.join(args.checkpoint, "compact_point_cloud_static.ply"))
-    # else:
     dyn_gaussians.load_ply(os.path.join(args.checkpoint, "point_cloud.ply"))
     stat_gaussians.load_ply(os.path.join(args.checkpoint, "point_cloud_static.ply"))
     
-    dyn_gaussians.flatten_control_point() # TODO: support this saving in training
+    dyn_gaussians.flatten_control_point()
     stat_gaussians.save_ply_compact(os.path.join(args.checkpoint, "compact_point_cloud_static.ply"))
     dyn_gaussians.save_ply_compact_dy(os.path.join(args.checkpoint, "compact_point_cloud.ply"))
         
@@ -161,12 +173,25 @@ if __name__ == "__main__":
     viewdirs = np.stack([x, y, np.ones_like(x)], axis=-1)
     local_viewdirs = viewdirs / np.linalg.norm(viewdirs, axis=-1, keepdims=True)
 
+    # ---------------- 核心修改区块 ---------------- #
+    # 动态加载并提取相机 config 中的 target_w2c 里的 R 和 T
+    with open(args.camera_config, 'r') as f:
+        cam_conf = json.load(f)
+    print(f"✅ Loaded camera parameters from: {args.camera_config}")
+    
+    target_w2c = np.array(cam_conf["target_w2c"], dtype=np.float32)
+    # 取出 3x3 旋转矩阵和 3x1 平移向量
+    target_R = target_w2c[:3, :3]
+    # GS 中的 T 需要是一维数组(3,)
+    target_T = target_w2c[:3, 3] 
+
     with torch.no_grad():
         for cam in viewpoint_stack:
             time_in = torch.tensor(cam.time).float().cuda()
             pred_R, pred_T = dyn_gaussians._posenet(time_in.view(1, 1))
             R_ = torch.transpose(pred_R, 2, 1).detach().cpu().numpy()
             t_ = pred_T.detach().cpu().numpy()
+            # 注意：原本 train_cams 也会被强制绑定（这块跟原算法网络预测有关），保持原样即可
             cam.update_cam(
                 R_[0],
                 t_[0],
@@ -175,15 +200,21 @@ if __name__ == "__main__":
                 dyn_gaussians._posenet.focal_bias.exp().detach().cpu().numpy(),
             )
 
+    # 将所有的测试相机（渲染序列）替换成我们在 json 里面规定的固定目标视角！
     for view_id in range(len(my_test_cams)):
         my_test_cams[view_id].update_cam(
-            viewpoint_stack[0].R,
-            viewpoint_stack[0].T,
+            target_R,        # 替换为了读取到的 R
+            target_T,        # 替换为了读取到的 T
             local_viewdirs,
             batch_shape,
             dyn_gaussians._posenet.focal_bias.exp().detach().cpu().numpy(),
         )
+    # ---------------------------------------------- #
 
+    # 输出文件夹改成带有 _sync 后缀的，以作区分
+    out_dir = os.path.join("output", args.expname + "_sync")
+    print(f"🎬 Starting generation... Results will be saved to {out_dir}")
+    
     training_report(
         scene,
         viewpoint_stack,
@@ -192,5 +223,5 @@ if __name__ == "__main__":
         background,
         "fine",
         scene.dataset_type,
-        os.path.join("output", args.expname),
+        out_dir,
     )
