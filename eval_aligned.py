@@ -100,9 +100,6 @@ if __name__ == "__main__":
     hp = ModelHiddenParams(parser)
 
     parser.add_argument(
-        "--model_path", type=str, required=True, help="Path to train_aligned output model directory",
-    )
-    parser.add_argument(
         "--iteration", type=int, default=-1, help="Iteration to evaluate. -1 means latest",
     )
     parser.add_argument("--expname", type=str, default="")
