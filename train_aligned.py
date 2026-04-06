@@ -667,6 +667,14 @@ def scene_reconstruction(
                 # =================== MODIFIED: Use DIBR target mask in mask loss ===================
                 mask_loss = opt.w_mask * mask_dice_loss(d_alpha_tensor, dibr_target_mask_tensor)
                 # ====================================================================================
+                
+                # Debug: Log whether DIBR constraint is applied
+                if iteration % 500 == 0 and iteration > 0:
+                    src_mask_overlap = (motion_mask_tensor * dibr_target_mask_tensor).sum() / (motion_mask_tensor.sum() + 1e-8)
+                    print(f"[DIBR Alignment] Iter {iteration}: Source↔Target mask overlap={src_mask_overlap:.3f}, "
+                          f"Using{'✓' if DIBR_AVAILABLE else '✗'} DIBR target mask, "
+                          f"mask_loss={mask_loss.item():.6f}")
+                
                 reg_loss += mask_loss
 
                 normal_loss = l2_loss(normal_tensor, gt_normal_tensor, mask=motion_mask_tensor)
