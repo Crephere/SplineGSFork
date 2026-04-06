@@ -87,13 +87,18 @@ def training_report(scene: Scene, train_cams, test_cams, renderFunc, background,
 
 def resolve_checkpoint_path(model_path: str, iteration: int) -> str:
     point_cloud_root = os.path.join(model_path, "point_cloud")
+    if not os.path.isdir(point_cloud_root):
+        raise FileNotFoundError("point_cloud directory not found: {}".format(point_cloud_root))
     if iteration < 0:
         iteration = searchForMaxIteration(point_cloud_root)
-    return os.path.join(point_cloud_root, "iteration_{}".format(iteration))
+    checkpoint_path = os.path.join(point_cloud_root, "iteration_{}".format(iteration))
+    if not os.path.isdir(checkpoint_path):
+        raise FileNotFoundError("iteration directory not found: {}".format(checkpoint_path))
+    return checkpoint_path
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser(description="Training script parameters")
+    parser = ArgumentParser(description="Training script parameters", conflict_handler="resolve")
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
