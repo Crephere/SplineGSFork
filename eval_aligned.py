@@ -104,6 +104,7 @@ if __name__ == "__main__":
     pp = PipelineParams(parser)
     hp = ModelHiddenParams(parser)
 
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the model output directory")
     parser.add_argument(
         "--iteration", type=int, default=-1, help="Iteration to evaluate. -1 means latest",
     )
@@ -117,9 +118,6 @@ if __name__ == "__main__":
 
         config = mmcv.Config.fromfile(args.configs)
         args = merge_hparams(args, config)
-
-    if not getattr(args, "model_path", None):
-        raise ValueError("model_path is required. Please pass --model_path output/<exp_name>")
 
     dataset = lp.extract(args)
     hyper = hp.extract(args)

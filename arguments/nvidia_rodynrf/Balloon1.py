@@ -1,6 +1,7 @@
 _base_ = "./default.py"
 
 ModelParams = dict(
+    source_path="data/nvidia_rodynrf/Balloon1",
     depth_type="disp",
 )
 
