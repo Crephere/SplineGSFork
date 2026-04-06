@@ -113,6 +113,9 @@ if __name__ == "__main__":
         config = mmcv.Config.fromfile(args.configs)
         args = merge_hparams(args, config)
 
+    if not getattr(args, "model_path", None):
+        raise ValueError("model_path is required. Please pass --model_path output/<exp_name>")
+
     dataset = lp.extract(args)
     hyper = hp.extract(args)
     stat_gaussians = GaussianModel(dataset)
