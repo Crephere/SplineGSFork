@@ -81,6 +81,7 @@ def compute_dibr_target_mask(frame, depth, mask, K, w2c_src, w2c_tgt, backend='p
     
     try:
         from dibr import DIBRMasked
+        from dibr._core import DIBRCore
         
         # 确保输入是numpy数组
         if isinstance(mask, torch.Tensor):
@@ -108,17 +109,55 @@ def compute_dibr_target_mask(frame, depth, mask, K, w2c_src, w2c_tgt, backend='p
         else:
             w2c_tgt_np = w2c_tgt
         
-        # 计算目标视角mask
-        dibr_target_mask_bool = DIBRMasked._warp_dynamic_mask_to_target(
-            mask_np, depth_np, K_np, w2c_src_np, w2c_tgt_np, backend=backend
-        )
+        # DEBUG: 打印输入形状和类型
+        print(f"[DEBUG] DIBR inputs:")
+        print(f"  mask shape: {mask_np.shape}, dtype: {mask_np.dtype}, range: [{mask_np.min()}, {mask_np.max()}]")
+        print(f"  depth shape: {depth_np.shape}, dtype: {depth_np.dtype}, range: [{depth_np.min():.3f}, {depth_np.max():.3f}]")
+        print(f"  K shape: {K_np.shape}, dtype: {K_np.dtype}")
+        print(f"  w2c_src shape: {w2c_src_np.shape}, dtype: {w2c_src_np.dtype}")
+        print(f"  w2c_tgt shape: {w2c_tgt_np.shape}, dtype: {w2c_tgt_np.dtype}")
+        print(f"  backend: {backend}")
+        
+        # 手动执行 _warp_dynamic_mask_to_target 的逻辑以便调试
+        dynamic_src = (mask_np > 0).astype(np.uint8) * 255
+        dynamic_src_3c = np.repeat(dynamic_src[:, :, None], 3, axis=2)
+        
+        print(f"[DEBUG] dynamic_src_3c shape: {dynamic_src_3c.shape}, dtype: {dynamic_src_3c.dtype}")
+        
+        # 直接调用 DIBRCore.dibr_warp 并捕获详细错误
+        try:
+            result = DIBRCore.dibr_warp(
+                dynamic_src_3c,
+                depth_np,
+                K_np,
+                w2c_src_np,
+                w2c_tgt_np,
+                backend=backend,
+            )
+            print(f"[DEBUG] DIBRCore.dibr_warp returned type: {type(result)}, len: {len(result) if isinstance(result, tuple) else 'N/A'}")
+            if isinstance(result, tuple):
+                dynamic_warped, valid_mask = result
+                print(f"[DEBUG] dynamic_warped shape: {dynamic_warped.shape}, dtype: {dynamic_warped.dtype}")
+                print(f"[DEBUG] valid_mask shape: {valid_mask.shape}, dtype: {valid_mask.dtype}")
+                dibr_target_mask_bool = dynamic_warped[:, :, 0] > 127
+            else:
+                print(f"[ERROR] Unexpected return type from dibr_warp: {type(result)}")
+                raise ValueError(f"Expected tuple, got {type(result)}")
+        except Exception as inner_e:
+            print(f"[ERROR] DIBRCore.dibr_warp failed: {inner_e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         # 转为tensor并返回 (1, 1, H, W)
         target_mask = torch.from_numpy(dibr_target_mask_bool[None, None].astype(np.float32)).cuda()
+        print(f"[DEBUG] Successfully computed DIBR target mask, shape: {target_mask.shape}")
         return target_mask
         
     except Exception as e:
         print(f"[WARNING] DIBR mask computation failed: {e}. Using source mask instead.")
+        import traceback
+        traceback.print_exc()
         return torch.from_numpy(mask_np[None, None].astype(np.float32)).cuda()
 
 
